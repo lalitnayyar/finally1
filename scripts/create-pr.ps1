@@ -92,26 +92,56 @@ if (-not (Test-Path ".git")) {
 
 Write-ColorOutput $Blue "Starting enhanced PR creation process..."
 
-# Ensure we're on main and pull latest
-Write-ColorOutput $Blue "Pulling latest changes from main..."
+# Check current branch and changes
 $currentBranch = (git branch --show-current).Trim()
-if ($currentBranch -ne "main") {
-    git checkout main
-    if ($LASTEXITCODE -ne 0) {
-        Write-ColorOutput $Red "Failed to checkout main branch"
-        exit 1
-    }
-}
-
-git fetch origin main
-git merge origin/main
-
-# Check for changes
 Write-ColorOutput $Blue "Analyzing current changes..."
 $gitStatus = git status --porcelain
+
 if (-not $gitStatus) {
     Write-ColorOutput $Yellow "No changes detected. Nothing to commit."
     exit 0
+}
+
+# Determine if we're on a feature branch with changes
+if ($currentBranch -ne "main") {
+    Write-ColorOutput $Cyan "Currently on branch: $currentBranch"
+    Write-ColorOutput $Cyan "Detected uncommitted changes. Options:"
+    Write-ColorOutput $Cyan "1. Continue working on current branch: $currentBranch"
+    Write-ColorOutput $Cyan "2. Create new branch from current changes"
+    
+    $choice = Read-Host "Press Enter to continue with current branch, or type 'new' to create a new branch"
+    
+    if ($choice -eq "new") {
+        # User wants to create a new branch
+        Write-ColorOutput $Blue "Will create a new branch from current changes..."
+        $switchToMain = $true
+    } else {
+        # User wants to continue with current branch
+        Write-ColorOutput $Blue "Continuing with current branch: $currentBranch"
+        $BranchName = $currentBranch
+        $switchToMain = $false
+    }
+} else {
+    # We're on main, proceed normally
+    $switchToMain = $false
+}
+
+# Switch to main if needed and requested
+if ($switchToMain) {
+    Write-ColorOutput $Blue "Stashing changes and switching to main..."
+    git stash push -m "Temporary stash for new branch creation"
+    git checkout main
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput $Red "Failed to checkout main branch"
+        git stash pop
+        exit 1
+    }
+    
+    git fetch origin main
+    git merge origin/main
+    
+    Write-ColorOutput $Blue "Restoring stashed changes..."
+    git stash pop
 }
 
 # Get list of files to be committed
@@ -185,12 +215,17 @@ if ([string]::IsNullOrEmpty($CommitMessage)) {
     exit 1
 }
 
-# Create and switch to new branch
-Write-ColorOutput $Blue "Creating new branch: $BranchName"
-git checkout -b $BranchName
-if ($LASTEXITCODE -ne 0) {
-    Write-ColorOutput $Red "Failed to create branch: $BranchName"
-    exit 1
+# Create new branch or stay on current branch
+$currentBranch = (git branch --show-current).Trim()
+if ($currentBranch -ne $BranchName) {
+    Write-ColorOutput $Blue "Creating new branch: $BranchName"
+    git checkout -b $BranchName
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput $Red "Failed to create branch: $BranchName"
+        exit 1
+    }
+} else {
+    Write-ColorOutput $Blue "Staying on current branch: $BranchName"
 }
 
 # Show current status
@@ -206,8 +241,11 @@ Write-ColorOutput $Blue "Creating commit with message: $CommitMessage"
 git commit -m $CommitMessage
 if ($LASTEXITCODE -ne 0) {
     Write-ColorOutput $Red "Failed to create commit"
-    git checkout main
-    git branch -D $BranchName
+    # Only delete branch if we created it
+    if ($currentBranch -ne $BranchName -and $BranchName -ne "main") {
+        git checkout main
+        git branch -D $BranchName
+    }
     exit 1
 }
 
