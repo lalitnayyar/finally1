@@ -23,7 +23,7 @@ function Write-ColorOutput($ForegroundColor, $Text) {
 }
 
 function Get-AISuggestions($changes, $filelist) {
-    Write-ColorOutput $Cyan "🤖 Analyzing changes with AI..."
+    Write-ColorOutput $Cyan "AI: Analyzing changes with AI..."
     
     # Create a focused prompt for the AI
     $prompt = @"
@@ -43,7 +43,7 @@ COMMIT: [suggested commit message]
 
     try {
         # Use python to call AI (assuming OpenRouter/LiteLLM is available)
-        $pythonScript = @"
+        $pythonScript = @'
 import requests
 import json
 import os
@@ -60,7 +60,7 @@ try:
         headers={'Authorization': f'Bearer {api_key}'},
         json={
             'model': 'cerebras/llama3.1-8b',
-            'messages': [{'role': 'user', 'content': '''$prompt'''}],
+            'messages': [{'role': 'user', 'content': '''$($prompt -replace "'", "`'")'''}],
             'max_tokens': 150
         },
         timeout=10
@@ -75,7 +75,7 @@ try:
 except:
     print('BRANCH: feature/code-changes')  
     print('COMMIT: Update code with recent changes')
-"@
+'@
         
         $pythonScript | python -
         
@@ -102,7 +102,7 @@ except:
     }
 }
 
-Write-ColorOutput $Blue "🚀 Starting enhanced PR creation process..."
+Write-ColorOutput $Blue "Starting enhanced PR creation process..."
 
 # Check if we're on main branch
 $currentBranch = git branch --show-current
@@ -116,7 +116,7 @@ if ($currentBranch -ne "main") {
 }
 
 # Pull latest changes from main
-Write-ColorOutput $Blue "📥 Pulling latest changes from main..."
+Write-ColorOutput $Blue "Pulling latest changes from main..."
 git pull origin main
 if ($LASTEXITCODE -ne 0) {
     Write-ColorOutput $Red "❌ Failed to pull latest changes"
@@ -124,7 +124,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Analyze current changes
-Write-ColorOutput $Blue "🔍 Analyzing current changes..."
+Write-ColorOutput $Blue "Analyzing current changes..."
 $statusOutput = git status --porcelain
 if (-not $statusOutput) {
     Write-ColorOutput $Yellow "⚠️  No changes detected. Make some changes first!"
@@ -138,7 +138,7 @@ if (-not $diffOutput) {
     $diffOutput = git diff HEAD 2>$null
 }
 
-Write-ColorOutput $Green "📁 Files to be committed:"
+Write-ColorOutput $Green "Files to be committed:"
 $changedFiles | ForEach-Object { Write-Output "  - $_" }
 
 # Generate AI suggestions if parameters not provided
@@ -161,7 +161,7 @@ if ([string]::IsNullOrEmpty($BranchName) -or [string]::IsNullOrEmpty($CommitMess
     # Use suggestions or prompt user
     if ([string]::IsNullOrEmpty($BranchName)) {
         if ($suggestedBranch) {
-            Write-ColorOutput $Cyan "🤖 Suggested branch name: $suggestedBranch"
+            Write-ColorOutput $Cyan "AI: Suggested branch name: $suggestedBranch"
             $response = Read-Host "Press Enter to use suggestion, or type a different branch name"
             $BranchName = if ([string]::IsNullOrEmpty($response)) { $suggestedBranch } else { $response }
         } else {
@@ -171,7 +171,7 @@ if ([string]::IsNullOrEmpty($BranchName) -or [string]::IsNullOrEmpty($CommitMess
     
     if ([string]::IsNullOrEmpty($CommitMessage)) {
         if ($suggestedCommit) {
-            Write-ColorOutput $Cyan "🤖 Suggested commit message: $suggestedCommit"
+            Write-ColorOutput $Cyan "AI: Suggested commit message: $suggestedCommit"
             $response = Read-Host "Press Enter to use suggestion, or type a different commit message"
             $CommitMessage = if ([string]::IsNullOrEmpty($response)) { $suggestedCommit } else { $response }
         } else {
@@ -181,7 +181,7 @@ if ([string]::IsNullOrEmpty($BranchName) -or [string]::IsNullOrEmpty($CommitMess
 }
 
 # Create and checkout new feature branch
-Write-ColorOutput $Blue "🌿 Creating new branch: $BranchName"
+Write-ColorOutput $Blue "Creating new branch: $BranchName"
 git checkout -b $BranchName
 if ($LASTEXITCODE -ne 0) {
     Write-ColorOutput $Red "❌ Failed to create branch $BranchName"
@@ -189,15 +189,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Show current status
-Write-ColorOutput $Blue "📋 Current git status:"
+Write-ColorOutput $Blue "Current git status:"
 git status
 
 # Stage all changes
-Write-ColorOutput $Blue "➕ Staging all changes..."
+Write-ColorOutput $Blue "Staging all changes..."
 git add .
 
 # Create commit
-Write-ColorOutput $Blue "💾 Creating commit with message: $CommitMessage"
+Write-ColorOutput $Blue "Creating commit with message: $CommitMessage"
 git commit -m $CommitMessage
 if ($LASTEXITCODE -ne 0) {
     Write-ColorOutput $Red "❌ Failed to create commit"
@@ -205,7 +205,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Push branch to origin
-Write-ColorOutput $Blue "📤 Pushing branch to GitHub..."
+Write-ColorOutput $Blue "Pushing branch to GitHub..."
 git push -u origin $BranchName
 if ($LASTEXITCODE -ne 0) {
     Write-ColorOutput $Red "❌ Failed to push branch"
@@ -218,12 +218,13 @@ if ([string]::IsNullOrEmpty($PRTitle)) {
 }
 
 if ([string]::IsNullOrEmpty($PRDescription)) {
+    $modifiedFiles = git diff --name-only main..$BranchName | ForEach-Object { "- $_" } | Out-String
     $PRDescription = @"
 ## Changes Summary
 $CommitMessage
 
 ## Files Modified
-$(git diff --name-only main..$BranchName | ForEach-Object { "- $_" } | Out-String)
+$modifiedFiles
 
 ## Testing
 - Code tested locally
@@ -235,11 +236,11 @@ Generated automatically by enhanced create-pr.ps1 script with AI suggestions.
 "@
 }
 
-Write-ColorOutput $Green "✅ Branch created and pushed successfully!"
-Write-ColorOutput $Blue "🔗 To create a PR, visit:"
+Write-ColorOutput $Green "Branch created and pushed successfully!"
+Write-ColorOutput $Blue "To create a PR, visit:"
 Write-ColorOutput $Yellow "https://github.com/lalitnayyar/finally1/compare/$BranchName"
 
-Write-ColorOutput $Blue "📝 PR Details:"
+Write-ColorOutput $Blue "PR Details:"
 Write-Output "Title: $PRTitle"
 Write-Output "Description:"
 Write-Output $PRDescription
