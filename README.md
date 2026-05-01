@@ -1,62 +1,75 @@
 # FinAlly — AI Trading Workstation
 
-A visually stunning AI-powered trading workstation that streams live market data, simulates portfolio trading, and integrates an LLM chat assistant that can analyze positions and execute trades via natural language.
+A visually stunning AI-powered trading workstation that streams live market data, lets you trade a simulated portfolio, and includes an LLM chat assistant that can analyze positions and execute trades on your behalf.
 
-Built entirely by coding agents as a capstone project for an agentic AI coding course.
+Built as a capstone project for an agentic AI coding course — the entire codebase is produced by orchestrated AI agents.
 
 ## Features
 
-- **Live price streaming** via SSE with green/red flash animations
-- **Simulated portfolio** — $10k virtual cash, market orders, instant fills
-- **Portfolio visualizations** — heatmap (treemap), P&L chart, positions table
-- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades
-- **Watchlist management** — track tickers manually or via AI
-- **Dark terminal aesthetic** — Bloomberg-inspired, data-dense layout
-
-## Architecture
-
-Single Docker container serving everything on port 8000:
-
-- **Frontend**: Next.js (static export) with TypeScript and Tailwind CSS
-- **Backend**: FastAPI (Python/uv) with SSE streaming
-- **Database**: SQLite with lazy initialization
-- **AI**: LiteLLM → OpenRouter (Cerebras inference) with structured outputs
-- **Market data**: Built-in GBM simulator (default) or Massive API (optional)
+- **Live price streaming** — prices flash green/red on change via SSE
+- **Simulated portfolio** — $10,000 starting cash, market orders, instant fills
+- **Portfolio heatmap** — treemap sized by weight, colored by P&L
+- **P&L chart** — portfolio value over time
+- **AI chat assistant** — natural language trade execution and watchlist management
+- **Bloomberg-inspired UI** — dark, data-dense terminal aesthetic
 
 ## Quick Start
 
 ```bash
-# Clone and configure
+# Copy and configure environment variables
 cp .env.example .env
-# Add your OPENROUTER_API_KEY to .env
+# Edit .env — add your OPENROUTER_API_KEY (required for AI chat)
 
-# Run with Docker
-docker build -t finally .
-docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
+# Start (macOS/Linux)
+./scripts/start_mac.sh
 
-# Open http://localhost:8000
+# Start (Windows PowerShell)
+./scripts/start_windows.ps1
 ```
+
+Open [http://localhost:8000](http://localhost:8000).
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | OpenRouter API key for AI chat |
-| `MASSIVE_API_KEY` | No | Massive (Polygon.io) key for real market data; omit to use simulator |
+| `OPENROUTER_API_KEY` | Yes (for chat) | OpenRouter API key for LLM integration |
+| `MASSIVE_API_KEY` | No | Polygon.io key for real market data; omit to use the built-in simulator |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
+
+## Architecture
+
+Single Docker container on port 8000:
+
+- **Frontend** — Next.js (TypeScript), built as a static export, served by FastAPI
+- **Backend** — FastAPI (Python/uv), REST + SSE endpoints
+- **Database** — SQLite, volume-mounted at `db/finally.db`
+- **Market data** — GBM simulator (default) or Massive/Polygon.io REST API
+- **AI** — LiteLLM → OpenRouter (Cerebras inference), structured outputs
+
+## Development
+
+```bash
+# Backend
+cd backend
+uv sync --extra dev
+uv run pytest
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
 
 ## Project Structure
 
 ```
 finally/
-├── frontend/    # Next.js static export
-├── backend/     # FastAPI uv project
-├── planning/    # Project documentation and agent contracts
-├── test/        # Playwright E2E tests
-├── db/          # SQLite volume mount (runtime)
-└── scripts/     # Start/stop helpers
+├── frontend/          # Next.js TypeScript app
+├── backend/           # FastAPI uv project
+├── planning/          # Architecture docs and agent specs
+├── scripts/           # Start/stop Docker scripts
+├── test/              # Playwright E2E tests
+├── db/                # SQLite volume mount target
+└── Dockerfile
 ```
-
-## License
-
-See [LICENSE](LICENSE).

@@ -137,6 +137,7 @@ LLM_MOCK=false
 - If `MASSIVE_API_KEY` is set and non-empty → backend uses Massive REST API for market data
 - If `MASSIVE_API_KEY` is absent or empty → backend uses the built-in market simulator
 - If `LLM_MOCK=true` → backend returns deterministic mock LLM responses (for E2E tests)
+- If `OPENROUTER_API_KEY` is absent or empty → server starts normally; `/api/chat` returns HTTP 503 with `{"detail": "LLM not configured — set OPENROUTER_API_KEY"}`. All other endpoints function as normal.
 - The backend reads `.env` from the project root (mounted into the container or read via docker `--env-file`)
 
 ---
@@ -176,8 +177,14 @@ Both the simulator and the Massive client implement the same abstract interface.
 - Endpoint: `GET /api/stream/prices`
 - Long-lived SSE connection; client uses native `EventSource` API
 - Server pushes price updates for all tickers known to the system at a regular cadence (~500ms) — in the single-user model this is equivalent to the user's watchlist
-- Each SSE event contains ticker, price, previous price, timestamp, and change direction
+- Each SSE event contains: `ticker`, `price`, `previous_price`, `session_open` (first price seen since server start for this ticker), `session_change_pct` (% change from session open), `timestamp`, `change_direction`
 - Client handles reconnection automatically (EventSource has built-in retry)
+
+### Price History Buffer
+
+- The backend maintains an in-memory rolling buffer of the last 500 price points per ticker
+- This feeds the `GET /api/market/history/{ticker}` endpoint (see §8) so the main chart has data immediately on first click, even before SSE data has accumulated on the frontend
+- The buffer is populated by the same background task that updates the price cache; it is ephemeral (lost on restart)
 
 ---
 
@@ -215,6 +222,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 - `avg_cost` REAL
 - `updated_at` TEXT (ISO timestamp)
 - UNIQUE constraint on `(user_id, ticker)`
+- When quantity reaches 0 (all shares sold), the row is **deleted** — no zero-quantity rows are retained
 
 **trades** — Trade history (append-only log)
 - `id` TEXT PRIMARY KEY (UUID)
@@ -225,7 +233,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 - `price` REAL
 - `executed_at` TEXT (ISO timestamp)
 
-**portfolio_snapshots** — Portfolio value over time (for P&L chart). Recorded every 30 seconds by a background task, and immediately after each trade execution.
+**portfolio_snapshots** — Portfolio value over time (for P&L chart). Recorded at server startup (so the chart always has an initial data point), every 30 seconds by a background task, and immediately after each trade execution.
 - `id` TEXT PRIMARY KEY (UUID)
 - `user_id` TEXT (default: `"default"`)
 - `total_value` REAL
@@ -236,7 +244,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 - `user_id` TEXT (default: `"default"`)
 - `role` TEXT (`"user"` or `"assistant"`)
 - `content` TEXT
-- `actions` TEXT (JSON — trades executed, watchlist changes made; null for user messages)
+- `actions` TEXT (JSON — null for user messages; for assistant messages, shape is: `{"trades": [{"ticker": "AAPL", "side": "buy", "quantity": 10, "price": 190.5, "status": "executed" | "failed", "reason": "string or null"}], "watchlist_changes": [{"ticker": "PYPL", "action": "add" | "remove", "status": "executed" | "failed"}]}`)
 - `created_at` TEXT (ISO timestamp)
 
 ### Default Seed Data
@@ -252,6 +260,7 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/stream/prices` | SSE stream of live price updates |
+| GET | `/api/market/history/{ticker}` | Last 500 price points for a ticker from the in-memory buffer |
 
 ### Portfolio
 | Method | Path | Description |
@@ -270,12 +279,80 @@ All tables include a `user_id` column defaulting to `"default"`. This is hardcod
 ### Chat
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/api/chat` | Fetch conversation history (all messages, newest last) |
 | POST | `/api/chat` | Send a message, receive complete JSON response (message + executed actions) |
 
 ### System
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check (for Docker/deployment) |
+
+### Response Shapes
+
+**`GET /api/portfolio`**
+```json
+{
+  "cash_balance": 7340.50,
+  "total_value": 12480.75,
+  "positions": [
+    {
+      "ticker": "AAPL",
+      "quantity": 10,
+      "avg_cost": 188.50,
+      "current_price": 192.30,
+      "unrealized_pnl": 38.00,
+      "pnl_pct": 2.02
+    }
+  ]
+}
+```
+
+**`GET /api/watchlist`**
+```json
+[
+  {
+    "ticker": "AAPL",
+    "price": 192.30,
+    "previous_price": 191.80,
+    "session_open": 189.00,
+    "session_change_pct": 1.75,
+    "change_direction": "up"
+  }
+]
+```
+
+**`GET /api/market/history/{ticker}`**
+```json
+[
+  {"price": 191.20, "timestamp": "2026-04-29T14:23:01Z"},
+  {"price": 191.45, "timestamp": "2026-04-29T14:23:01.5Z"}
+]
+```
+
+**`POST /api/portfolio/trade`** request: `{"ticker": "AAPL", "quantity": 5, "side": "buy"}`
+```json
+{"ok": true, "price": 192.30, "total_cost": 961.50, "cash_balance": 6379.00}
+```
+On failure: HTTP 400 `{"detail": "insufficient cash"}`
+
+**`POST /api/chat`** request: `{"message": "Buy 5 shares of AAPL"}`
+```json
+{
+  "message": "Done — bought 5 shares of AAPL at $192.30.",
+  "trades": [{"ticker": "AAPL", "side": "buy", "quantity": 5, "price": 192.30, "status": "executed", "reason": null}],
+  "watchlist_changes": []
+}
+```
+
+**`GET /api/chat`**
+```json
+[
+  {"role": "user", "content": "Buy 5 shares of AAPL", "actions": null, "created_at": "2026-04-29T14:20:00Z"},
+  {"role": "assistant", "content": "Done — bought 5 shares of AAPL at $192.30.", "actions": {"trades": [...], "watchlist_changes": []}, "created_at": "2026-04-29T14:20:01Z"}
+]
+```
+
+**Error responses** use FastAPI's default shape: `{"detail": "human-readable message"}`
 
 ---
 
@@ -290,7 +367,7 @@ There is an OPENROUTER_API_KEY in the .env file in the project root.
 When the user sends a chat message, the backend:
 
 1. Loads the user's current portfolio context (cash, positions with P&L, watchlist with live prices, total portfolio value)
-2. Loads recent conversation history from the `chat_messages` table
+2. Loads the last 20 messages from the `chat_messages` table (10 turns) to keep the context window bounded
 3. Constructs a prompt with a system message, portfolio context, conversation history, and the user's new message
 4. Calls the LLM via LiteLLM → OpenRouter, requesting structured output, using the cerebras-inference skill
 5. Parses the complete structured JSON response
@@ -325,7 +402,7 @@ Trades specified by the LLM execute automatically — no confirmation dialog. Th
 - It creates an impressive, fluid demo experience
 - It demonstrates agentic AI capabilities — the core theme of the course
 
-If a trade fails validation (e.g., insufficient cash), the error is included in the chat response so the LLM can inform the user.
+If a trade fails validation (e.g., insufficient cash), it is still recorded in `actions` with `"status": "failed"` and a human-readable `"reason"` string, and the failure context is appended to the message returned to the frontend so the LLM can explain what happened.
 
 ### System Prompt Guidance
 
@@ -352,7 +429,7 @@ When `LLM_MOCK=true`, the backend returns deterministic mock responses instead o
 
 The frontend is a single-page application with a dense, terminal-inspired layout. The specific component architecture and layout system is up to the Frontend Engineer, but the UI should include these elements:
 
-- **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), daily change %, and a sparkline mini-chart (accumulated from SSE since page load)
+- **Watchlist panel** — grid/table of watched tickers with: ticker symbol, current price (flashing green/red on change), session change % (% from first price seen since server start, sourced from SSE), and a sparkline mini-chart (accumulated from SSE since page load)
 - **Main chart area** — larger chart for the currently selected ticker, with at minimum price over time. Clicking a ticker in the watchlist selects it here.
 - **Portfolio heatmap** — treemap visualization where each rectangle is a position, sized by portfolio weight, colored by P&L (green = profit, red = loss)
 - **P&L chart** — line chart showing total portfolio value over time, using data from `portfolio_snapshots`
@@ -454,3 +531,32 @@ The container is designed to deploy to AWS App Runner, Render, or any container 
 - Portfolio visualization: heatmap renders with correct colors, P&L chart has data points
 - AI chat (mocked): send a message, receive a response, trade execution appears inline
 - SSE resilience: disconnect and verify reconnection
+
+---
+
+## 13. Notes
+
+*Added 2026-04-29.*
+
+### Feedback
+
+**§10 — Charting library inconsistency**
+"Canvas-based charting library preferred (Lightweight Charts or Recharts)" — Recharts is SVG-based, not canvas. These two libraries are architecturally different and not interchangeable for performance purposes. Recommend specifying **Lightweight Charts** as the primary choice (canvas, purpose-built for financial data) and removing Recharts from this sentence to avoid agent confusion.
+
+**§9 — Agent instructions mixed into spec**
+Step 4 of the LLM flow reads: *"using the cerebras-inference skill"* — this is a direction to the coding agent, not a system specification. It will confuse any reader who is not an agent. Move agent-specific tooling guidance to a separate section or CLAUDE.md and keep §9 as a pure technical spec describing what the production code does.
+
+**§10 — State management gap**
+The SSE price stream will need to simultaneously update the watchlist panel, sparklines, header value, and positions table. The spec is silent on state management strategy. For a Next.js app with this many simultaneous subscribers to live data, a brief note recommending React Context or a lightweight store (e.g., Zustand) would prevent the frontend agent from architecting this ad-hoc.
+
+### Simplification Opportunities
+
+1. **Drop UUID primary keys on lookup tables.** `watchlist`, `positions`, and `portfolio_snapshots` use UUID PKs but are never referenced by ID from the frontend or LLM. SQLite auto-increment integers (`INTEGER PRIMARY KEY`) are simpler and sufficient. The `trades` table could keep UUIDs if external referencing is anticipated.
+
+2. **Defer `user_id` scaffolding.** Every table carries a `user_id TEXT DEFAULT 'default'` column. This adds noise to every query and schema definition with zero current benefit. The rationale is "enables future multi-user support without schema migration" — but a future migration to add `user_id` to SQLite tables is trivial (one `ALTER TABLE` per table). Consider omitting this column entirely until multi-user is actually needed.
+
+3. **Simplify `portfolio_snapshots` background task.** A dedicated 30-second background task purely for snapshotting adds a thread/coroutine and lifecycle management overhead. Since snapshots are already recorded on every trade, the 30-second interval could be replaced with a simple call at server startup (to seed the chart) plus the existing on-trade snapshot. This is sufficient for the P&L chart and removes one background task.
+
+4. **`actions` column redundancy.** Trade executions triggered by the LLM are stored in both the `trades` table (as canonical records) and the `actions` JSON column of `chat_messages` (as context). This duplication means there are two sources of truth for LLM-originated trades. Consider whether `actions` could simply store a list of `trade_id` references rather than full trade data, or whether the column should be removed and the frontend reconstructs actions from the `trades` table by timestamp correlation.
+
+5. **Merge `users_profile` concerns.** The table has only two meaningful columns (`cash_balance` and `created_at`) for a single hardcoded user. Consider whether this can simply be a config value initialized in the database seed rather than a full table — though keeping it as a table is the most natural extension point if multi-user is ever added, so this is low priority.
