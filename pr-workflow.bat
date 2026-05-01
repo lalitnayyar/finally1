@@ -7,14 +7,15 @@ if "%~1"=="" (
     echo   FinAlly GitHub Workflow Helper
     echo ====================================
     echo.
-    echo Usage: pr-workflow.bat [create^|auto^|merge^|status^|help]
+    echo Usage: pr-workflow.bat [create^|auto^|automerge^|merge^|status^|help]
     echo.
     echo Commands:
-    echo   create  - Create a new feature branch and PR ^(interactive^)
-    echo   auto    - Create PR with AI-generated branch name and commit message
-    echo   merge   - Merge an existing PR to main
-    echo   status  - Show current git status
-    echo   help    - Show detailed help
+    echo   create    - Create a new feature branch and PR ^(interactive^)
+    echo   auto      - Create PR with AI-generated branch name and commit message
+    echo   automerge - Create PR with AI and automatically merge it
+    echo   merge     - Merge an existing PR to main
+    echo   status    - Show current git status
+    echo   help      - Show detailed help
     echo.
     pause
     goto :eof
@@ -29,6 +30,12 @@ if /i "%1"=="create" (
 if /i "%1"=="auto" (
     echo Creating PR with AI suggestions...
     powershell -ExecutionPolicy Bypass -File ".\scripts\create-pr.ps1" -AutoGenerate
+    goto :eof
+)
+
+if /i "%1"=="automerge" (
+    echo Creating and auto-merging PR with AI suggestions...
+    powershell -ExecutionPolicy Bypass -File ".\scripts\create-pr.ps1" -AutoGenerate -AutoMerge
     goto :eof
 )
 
@@ -62,17 +69,21 @@ if /i "%1"=="help" (
     echo WORKFLOW:
     echo 1. Make your code changes
     echo 2. Run: pr-workflow.bat create ^(interactive^) OR pr-workflow.bat auto ^(AI-powered^)
-    echo 3. Go to GitHub and review/approve the PR
-    echo 4. Run: pr-workflow.bat merge [branch-name]
+    echo    OR pr-workflow.bat automerge ^(AI-powered with auto-merge^)
+    echo 3. ^(Optional^) Go to GitHub and review/approve the PR ^(if not using automerge^)
+    echo 4. ^(Optional^) Run: pr-workflow.bat merge [branch-name] ^(if not using automerge^)
     echo.
     echo COMMANDS:
-    echo   create - Interactive mode: prompts for branch name and commit message
-    echo            Provides AI suggestions that you can accept or modify
+    echo   create    - Interactive mode: prompts for branch name and commit message
+    echo             Provides AI suggestions that you can accept or modify
     echo.
-    echo   auto   - Automatic mode: uses AI to analyze your changes and generate
-    echo            branch names and commit messages automatically
+    echo   auto      - Automatic mode: uses AI to analyze your changes and generate
+    echo             branch names and commit messages automatically
     echo.
-    echo   merge  - Merge an approved PR back to main branch
+    echo   automerge - Full automation: creates PR with AI and immediately merges it
+    echo             Requires GitHub CLI ^(gh^) to be installed
+    echo.
+    echo   merge     - Merge an approved PR back to main branch
     echo.
     echo   status - Show current git status and repository information
     echo.
@@ -92,6 +103,9 @@ if /i "%1"=="help" (
     echo pr-workflow.bat auto
     echo   ^(AI analyzes changes and suggests everything^)
     echo.
+    echo pr-workflow.bat automerge
+    echo   ^(AI creates and auto-merges PR - full automation^)
+    echo.
     echo pr-workflow.bat create
     echo   ^(Interactive with AI suggestions^)
     echo.
@@ -99,6 +113,7 @@ if /i "%1"=="help" (
     echo.
     echo REQUIREMENTS:
     echo - OPENROUTER_API_KEY environment variable for AI features
+    echo - GitHub CLI ^(gh^) for automerge functionality
     echo - Fallback to manual input if API key not available
     echo.
     echo FILES CREATED:
