@@ -1,48 +1,24 @@
-# PowerShell script to create a feature branch, commit changes, and create a PR
-# Enhanced with AI-powered branch name and commit message generation
 param(
     [string]$BranchName = "",
     [string]$CommitMessage = "",
-    [string]$PRTitle = "",
-    [string]$PRDescription = "",
-    [switch]$AutoGenerate = $false
+    [switch]$AutoGenerate
 )
 
-# Colors for output
-$Green = [System.ConsoleColor]::Green
-$Yellow = [System.ConsoleColor]::Yellow
-$Red = [System.ConsoleColor]::Red
-$Blue = [System.ConsoleColor]::Blue
-$Cyan = [System.ConsoleColor]::Cyan
-
-function Write-ColorOutput($ForegroundColor, $Text) {
-    $currentColor = [Console]::ForegroundColor
-    [Console]::ForegroundColor = $ForegroundColor
-    Write-Output $Text
-    [Console]::ForegroundColor = $currentColor
+function Write-ColorOutput {
+    param(
+        [ConsoleColor]$Color,
+        [string]$Message
+    )
+    $originalColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Output $Message
+    $Host.UI.RawUI.ForegroundColor = $originalColor
 }
 
-function Get-AISuggestions($changes, $filelist) {
-    Write-ColorOutput $Cyan "AI: Analyzing changes with AI..."
+function Get-AISuggestions {
+    param([string]$diffOutput)
     
-    # Create a focused prompt for the AI
-    $prompt = @"
-Based on the following code changes, suggest:
-1. A branch name (format: type/short-description, e.g., feature/user-auth, bugfix/login-error, docs/readme-update)
-2. A commit message (concise, descriptive, present tense)
-
-Files changed: $($filelist -join ', ')
-
-Changes summary:
-$changes
-
-Respond in this exact format:
-BRANCH: [suggested branch name]
-COMMIT: [suggested commit message]
-"@
-
     try {
-        # Use python to call AI (assuming OpenRouter/LiteLLM is available)
         $pythonScript = @'
 import requests
 import json
@@ -77,114 +53,143 @@ except:
     print('COMMIT: Update code with recent changes')
 '@
         
-        $pythonScript | python -
+        $prompt = "Analyze this git diff and suggest a concise branch name (format: type/description) and commit message. Files changed: $(git diff --name-only | Out-String). Diff: $($diffOutput.Substring(0, [Math]::Min(1000, $diffOutput.Length))). Respond in format: 'BRANCH: branch-name' on first line, 'COMMIT: commit message' on second line."
         
-    } catch {
-        # Fallback suggestions
-        Write-ColorOutput $Yellow "⚠️  AI unavailable, using fallback suggestions..."
-        $fileTypes = $filelist | ForEach-Object { 
-            $ext = [System.IO.Path]::GetExtension($_)
-            switch ($ext) {
-                ".md" { "docs" }
-                ".ps1" { "scripts" }
-                ".py" { "backend" }
-                ".js" { "frontend" }
-                ".ts" { "frontend" }
-                ".json" { "config" }
-                default { "feature" }
-            }
-        } | Select-Object -Unique
+        $result = $pythonScript | python -
         
-        $primaryType = if ($fileTypes.Count -eq 1) { $fileTypes[0] } else { "feature" }
+        if ($result -match "BRANCH: (.+)") {
+            $suggestedBranch = $matches[1].Trim()
+        }
+        if ($result -match "COMMIT: (.+)") {
+            $suggestedCommit = $matches[1].Trim()
+        }
         
-        Write-Output "BRANCH: $primaryType/update-$(Get-Date -Format 'MMdd')"
-        Write-Output "COMMIT: Update $($filelist.Count) files with recent changes"
+        return @{
+            Branch = $suggestedBranch
+            Commit = $suggestedCommit
+        }
     }
+    catch {
+        return @{
+            Branch = "feature/code-changes"
+            Commit = "Update code with recent changes"
+        }
+    }
+}
+
+# Color definitions
+$Red = [ConsoleColor]::Red
+$Green = [ConsoleColor]::Green
+$Blue = [ConsoleColor]::Blue
+$Yellow = [ConsoleColor]::Yellow
+$Cyan = [ConsoleColor]::Cyan
+
+# Check if we're in a git repository
+if (-not (Test-Path ".git")) {
+    Write-ColorOutput $Red "Error: Not in a git repository"
+    exit 1
 }
 
 Write-ColorOutput $Blue "Starting enhanced PR creation process..."
 
-# Check if we're on main branch
-$currentBranch = git branch --show-current
+# Ensure we're on main and pull latest
+Write-ColorOutput $Blue "Pulling latest changes from main..."
+$currentBranch = (git branch --show-current).Trim()
 if ($currentBranch -ne "main") {
-    Write-ColorOutput $Yellow "⚠️  Switching to main branch first..."
     git checkout main
     if ($LASTEXITCODE -ne 0) {
-        Write-ColorOutput $Red "❌ Failed to switch to main branch"
+        Write-ColorOutput $Red "Failed to checkout main branch"
         exit 1
     }
 }
 
-# Pull latest changes from main
-Write-ColorOutput $Blue "Pulling latest changes from main..."
-git pull origin main
-if ($LASTEXITCODE -ne 0) {
-    Write-ColorOutput $Red "❌ Failed to pull latest changes"
-    exit 1
-}
+git fetch origin main
+git merge origin/main
 
-# Analyze current changes
+# Check for changes
 Write-ColorOutput $Blue "Analyzing current changes..."
-$statusOutput = git status --porcelain
-if (-not $statusOutput) {
-    Write-ColorOutput $Yellow "⚠️  No changes detected. Make some changes first!"
-    exit 1
+$gitStatus = git status --porcelain
+if (-not $gitStatus) {
+    Write-ColorOutput $Yellow "No changes detected. Nothing to commit."
+    exit 0
 }
 
-# Get file list and changes
-$changedFiles = git status --porcelain | ForEach-Object { $_.Substring(3) }
-$diffOutput = git diff --staged HEAD 2>$null
-if (-not $diffOutput) {
-    $diffOutput = git diff HEAD 2>$null
+# Get list of files to be committed
+$filesToCommit = @()
+$unstagedChanges = @()
+$newFiles = @()
+
+foreach ($line in $gitStatus) {
+    $status = $line.Substring(0, 2)
+    $filepath = $line.Substring(3)
+    
+    if ($status -match "[MAD ]") {
+        $filesToCommit += $filepath
+    }
+    if ($status -match "[ MAD]") {
+        $unstagedChanges += $filepath
+    }
+    if ($status -match "\?\?") {
+        $newFiles += $filepath
+    }
 }
 
 Write-ColorOutput $Green "Files to be committed:"
-$changedFiles | ForEach-Object { Write-Output "  - $_" }
+($filesToCommit + $unstagedChanges + $newFiles) | ForEach-Object { Write-Output "  - $_" }
 
-# Generate AI suggestions if parameters not provided
-if ([string]::IsNullOrEmpty($BranchName) -or [string]::IsNullOrEmpty($CommitMessage) -or $AutoGenerate) {
-    $suggestions = Get-AISuggestions $diffOutput $changedFiles
+# Get AI suggestions if AutoGenerate is specified
+$suggestedBranch = $null
+$suggestedCommit = $null
+
+if ($AutoGenerate) {
+    Write-ColorOutput $Cyan "AI: Analyzing changes with AI..."
     
-    # Parse AI suggestions
-    $suggestedBranch = ""
-    $suggestedCommit = ""
-    
-    $suggestions -split "`n" | ForEach-Object {
-        if ($_ -match "BRANCH:\s*(.+)") {
-            $suggestedBranch = $matches[1].Trim()
-        }
-        elseif ($_ -match "COMMIT:\s*(.+)") {
-            $suggestedCommit = $matches[1].Trim()
-        }
+    $diffOutput = git diff HEAD
+    if (-not $diffOutput) {
+        $diffOutput = git diff --cached
     }
     
-    # Use suggestions or prompt user
-    if ([string]::IsNullOrEmpty($BranchName)) {
-        if ($suggestedBranch) {
-            Write-ColorOutput $Cyan "AI: Suggested branch name: $suggestedBranch"
-            $response = Read-Host "Press Enter to use suggestion, or type a different branch name"
-            $BranchName = if ([string]::IsNullOrEmpty($response)) { $suggestedBranch } else { $response }
-        } else {
-            $BranchName = Read-Host "Enter branch name (e.g., feature/add-dashboard)"
-        }
-    }
-    
-    if ([string]::IsNullOrEmpty($CommitMessage)) {
-        if ($suggestedCommit) {
-            Write-ColorOutput $Cyan "AI: Suggested commit message: $suggestedCommit"
-            $response = Read-Host "Press Enter to use suggestion, or type a different commit message"
-            $CommitMessage = if ([string]::IsNullOrEmpty($response)) { $suggestedCommit } else { $response }
-        } else {
-            $CommitMessage = Read-Host "Enter commit message"
-        }
+    $suggestions = Get-AISuggestions -diffOutput $diffOutput
+    $suggestedBranch = $suggestions.Branch
+    $suggestedCommit = $suggestions.Commit
+}
+
+# Get branch name and commit message
+if ([string]::IsNullOrEmpty($BranchName)) {
+    if ($suggestedBranch) {
+        Write-ColorOutput $Cyan "AI: Suggested branch name: $suggestedBranch"
+        $response = Read-Host "Press Enter to use suggestion, or type a different branch name"
+        $BranchName = if ([string]::IsNullOrEmpty($response)) { $suggestedBranch } else { $response }
+    } else {
+        $BranchName = Read-Host "Enter branch name (e.g., feature/add-dashboard)"
     }
 }
 
-# Create and checkout new feature branch
+if ([string]::IsNullOrEmpty($CommitMessage)) {
+    if ($suggestedCommit) {
+        Write-ColorOutput $Cyan "AI: Suggested commit message: $suggestedCommit"
+        $response = Read-Host "Press Enter to use suggestion, or type a different commit message"
+        $CommitMessage = if ([string]::IsNullOrEmpty($response)) { $suggestedCommit } else { $response }
+    } else {
+        $CommitMessage = Read-Host "Enter commit message"
+    }
+}
+
+# Validate inputs
+if ([string]::IsNullOrEmpty($BranchName)) {
+    Write-ColorOutput $Red "Error: Branch name cannot be empty"
+    exit 1
+}
+if ([string]::IsNullOrEmpty($CommitMessage)) {
+    Write-ColorOutput $Red "Error: Commit message cannot be empty"
+    exit 1
+}
+
+# Create and switch to new branch
 Write-ColorOutput $Blue "Creating new branch: $BranchName"
 git checkout -b $BranchName
 if ($LASTEXITCODE -ne 0) {
-    Write-ColorOutput $Red "❌ Failed to create branch $BranchName"
+    Write-ColorOutput $Red "Failed to create branch: $BranchName"
     exit 1
 }
 
@@ -194,28 +199,29 @@ git status
 
 # Stage all changes
 Write-ColorOutput $Blue "Staging all changes..."
-git add .
+git add -A
 
 # Create commit
 Write-ColorOutput $Blue "Creating commit with message: $CommitMessage"
 git commit -m $CommitMessage
 if ($LASTEXITCODE -ne 0) {
-    Write-ColorOutput $Red "❌ Failed to create commit"
+    Write-ColorOutput $Red "Failed to create commit"
+    git checkout main
+    git branch -D $BranchName
     exit 1
 }
 
-# Push branch to origin
+# Push to GitHub
 Write-ColorOutput $Blue "Pushing branch to GitHub..."
 git push -u origin $BranchName
 if ($LASTEXITCODE -ne 0) {
-    Write-ColorOutput $Red "❌ Failed to push branch"
+    Write-ColorOutput $Red "Failed to push branch to GitHub"
     exit 1
 }
 
-# Generate PR title and description if not provided
-if ([string]::IsNullOrEmpty($PRTitle)) {
-    $PRTitle = $CommitMessage
-}
+# Create PR description if not provided
+$PRTitle = $CommitMessage
+$PRDescription = ""
 
 if ([string]::IsNullOrEmpty($PRDescription)) {
     $modifiedFiles = git diff --name-only main..$BranchName | ForEach-Object { "- $_" } | Out-String
@@ -245,27 +251,33 @@ Write-Output "Title: $PRTitle"
 Write-Output "Description:"
 Write-Output $PRDescription
 
-# Create a PR summary file
-$prSummaryPath = "pr-summary-$(Get-Date -Format 'yyyyMMdd-HHmmss').md"
-@"
-# Pull Request Summary
+# Save PR details to file
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$prSummaryFile = "pr-summary-$timestamp.md"
+$prSummaryContent = @"
+# PR Summary - $timestamp
 
-**Branch:** $BranchName
-**Title:** $PRTitle
-**Created:** $(Get-Date)
-**AI-Generated:** $(if ($suggestedBranch -or $suggestedCommit) { "Yes" } else { "No" })
+## Branch: $BranchName
+## Title: $PRTitle
 
-## Description
 $PRDescription
 
-## GitHub PR Link
-https://github.com/lalitnayyar/finally1/compare/$BranchName
+## GitHub Links
+- **Create PR**: https://github.com/lalitnayyar/finally1/pull/new/$BranchName
+- **Compare Changes**: https://github.com/lalitnayyar/finally1/compare/$BranchName
 
-## Next Steps
+## Instructions
 1. Visit the GitHub link above
 2. Review the changes
-3. Create the pull request
-4. Once approved, merge using: .\scripts\merge-pr.ps1 $BranchName
-"@ | Out-File -FilePath $prSummaryPath -Encoding UTF8
+3. Click "Create pull request"
+4. The PR description will be automatically filled
 
-Write-ColorOutput $Green "📄 PR summary saved to: $prSummaryPath"
+## Files Changed
+$(git diff --name-only main..$BranchName | Out-String)
+
+---
+Generated by create-pr.ps1 on $(Get-Date)
+"@
+
+$prSummaryContent | Out-File -FilePath $prSummaryFile -Encoding UTF8
+Write-ColorOutput $Blue "PR summary saved to: $prSummaryFile"
