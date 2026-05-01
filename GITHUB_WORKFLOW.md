@@ -21,7 +21,10 @@ The workflow follows these principles:
 
 ### Option 1: Using the Batch File (Recommended)
 ```bash
-# Create a new PR
+# Create a new PR with AI suggestions (recommended)
+pr-workflow.bat auto
+
+# Create a new PR with interactive prompts
 pr-workflow.bat create
 
 # Merge an approved PR
@@ -33,14 +36,50 @@ pr-workflow.bat status
 
 ### Option 2: Using PowerShell Scripts Directly
 ```powershell
-# Create PR
+# Auto-generate PR with AI
+.\scripts\create-pr.ps1 -AutoGenerate
+
+# Create PR with manual input
 .\scripts\create-pr.ps1 -BranchName "feature/new-feature" -CommitMessage "Add new feature"
 
 # Merge PR
 .\scripts\merge-pr.ps1 -BranchName "feature/new-feature"
 ```
 
-## Detailed Workflow
+## AI-Powered Features
+
+### Automatic Branch Naming
+The AI analyzes your code changes and suggests appropriate branch names:
+- **feature/[description]** - for new functionality
+- **bugfix/[description]** - for bug fixes
+- **docs/[description]** - for documentation changes
+- **scripts/[description]** - for script/tooling changes
+- **config/[description]** - for configuration updates
+
+### Intelligent Commit Messages
+Based on the actual code changes, the AI generates:
+- Descriptive, concise commit messages
+- Present tense formatting ("Add feature" not "Added feature")
+- Context-aware descriptions based on file types and changes
+- Professional formatting following Git best practices
+
+### Requirements
+- **OPENROUTER_API_KEY** environment variable for AI features
+- Python available for API calls
+- Fallback to manual input if AI unavailable
+- Works offline with intelligent fallbacks
+
+### Usage
+```bash
+# Fully automated (recommended)
+pr-workflow.bat auto
+
+# Interactive with AI suggestions
+pr-workflow.bat create
+# (AI provides suggestions, you can accept or modify)
+```
+
+## Traditional Workflow
 
 ### Step 1: Make Your Changes
 1. Work on your code changes in the local repository
@@ -49,13 +88,22 @@ pr-workflow.bat status
 
 ### Step 2: Create Feature Branch and PR
 
-#### Using the batch file:
+#### Using AI Auto-Generation (Recommended):
+```bash
+pr-workflow.bat auto
+```
+- Automatically analyzes your code changes
+- Suggests branch names based on file types and changes
+- Generates descriptive commit messages
+- No manual input required!
+
+#### Using Interactive Mode:
 ```bash
 pr-workflow.bat create
 ```
-Follow the prompts to enter:
-- Branch name (e.g., `feature/add-dashboard`)
-- Commit message (e.g., "Add user dashboard with charts")
+- AI provides suggestions for branch names and commit messages
+- You can accept suggestions or provide your own
+- Fallback to manual input if AI unavailable
 
 #### Manual process:
 ```powershell

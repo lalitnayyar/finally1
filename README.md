@@ -29,6 +29,71 @@ cp .env.example .env
 
 Open [http://localhost:8000](http://localhost:8000).
 
+## GitHub Workflow
+
+This project includes an automated GitHub workflow system for professional development with proper branching and Pull Request management.
+
+### Quick Commands
+
+```bash
+# Create a new feature branch and PR with AI suggestions (recommended)
+pr-workflow.bat auto
+
+# Create a new feature branch and PR with interactive prompts  
+pr-workflow.bat create
+
+# Check git status and remotes  
+pr-workflow.bat status
+
+# Merge an approved PR back to main
+pr-workflow.bat merge
+
+# Get detailed help
+pr-workflow.bat help
+```
+
+### AI-Powered Workflow
+
+The workflow now includes AI-powered branch name and commit message generation:
+
+- **`pr-workflow.bat auto`** - Fully automated: AI analyzes your changes and suggests everything
+- **`pr-workflow.bat create`** - Interactive: AI provides suggestions you can accept or modify  
+- **Intelligent suggestions** based on file types, change patterns, and Git best practices
+- **Fallback support** - works even without AI/API access
+
+### Workflow Process
+
+1. **Make your code changes** locally and test them
+2. **Create a PR with AI**: Run `pr-workflow.bat auto`
+   - AI automatically analyzes changes and suggests branch names and commit messages
+   - Or use `pr-workflow.bat create` for interactive mode with AI suggestions
+3. **Review on GitHub**: Visit the provided link to review changes
+4. **Merge PR**: Run `pr-workflow.bat merge [branch-name]` 
+   - Merges to main branch and cleans up branches
+
+### Branch Naming Conventions
+- `feature/description` - New features
+- `bugfix/description` - Bug fixes  
+- `hotfix/description` - Urgent fixes
+- `docs/description` - Documentation updates
+
+### Repository
+- **GitHub**: https://github.com/lalitnayyar/finally1.git
+- **Workflow Documentation**: [GITHUB_WORKFLOW.md](GITHUB_WORKFLOW.md)
+- **Setup Guide**: [SETUP_COMPLETE.md](SETUP_COMPLETE.md) 
+- **Quick Reference**: [QUICKSTART.md](QUICKSTART.md)
+
+### AI Features Setup (Optional)
+For AI-powered branch names and commit messages:
+```bash
+# Set your OpenRouter API key (same key used for the trading app)
+set OPENROUTER_API_KEY=your-key-here
+
+# Or add to your .env file
+echo OPENROUTER_API_KEY=your-key-here >> .env
+```
+**Note**: AI features gracefully fall back to manual input if the API key is not set.
+
 ## Environment Variables
 
 | Variable | Required | Description |
